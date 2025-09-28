@@ -1,0 +1,146 @@
+#!/bin/bash
+
+# Skrip ini menampilkan informasi status VPS dan layanan.
+
+# --- Definisi Warna (Tidak akan ditampilkan di Telegram, tapi tetap ada di skrip asli) ---
+RED='\033[0;31m'
+NC='\033[0m'
+gray="\e[1;30m"
+Blue="\033[36m"
+GREEN='\033[0;32m'
+grenbo="\e[92;1m"
+yellow='\033[0;33m'
+# ISP dan CITY dari file atau curl (dengan fallback)
+ISP=$(cat /root/.isp 2>/dev/null || curl -s ipinfo.io/org | cut -d ' ' -f 2-10 || echo "Unknown ISP")
+CITY=$(cat /root/.city 2>/dev/null || curl -s ipinfo.io/city || echo "Unknown City")
+# Domain dari file atau curl (dengan fallback)
+domain=$(cat /etc/xray/domain 2>/dev/null || curl -sS ipv4.icanhazip.com || echo "Unknown Domain")
+WKT=$(curl -s ipinfo.io/timezone 2>/dev/null || echo "Unknown Timezone")
+IPVPS=$(curl -s ipv4.icanhazip.com 2>/dev/null || echo "Unknown IP")
+tram=$(free -m | awk 'NR==2 {print $2}' 2>/dev/null || echo "N/A") # Total RAM in MB
+swap=$(free -m | awk 'NR==4 {print $2}' 2>/dev/null || echo "N/A") # Total Swap in MB
+
+# Fungsi untuk mendapatkan status service
+# Memastikan service status hanya mengambil 'active (running)' atau 'inactive (dead)'
+# dan mengeluarkan 'running', 'exited', 'dead' atau 'failed'
+get_service_status() {
+    systemctl status "$1" 2>/dev/null | grep 'Active:' | awk '{print $3}' | tr -d '()'
+}
+
+# Mendapatkan status untuk setiap layanan
+Open_SSH=$(get_service_status ssh)
+Dropbear=$(get_service_status dropbear)
+SSH_Websocket=$(get_service_status ws-nontls) # Jika 'ws' adalah nama service SSH_Websocket
+OpenVPN=$(get_service_status openvpn)
+Nginx_Webserver=$(get_service_status nginx)
+DNS_Server=$(get_service_status server) # Asumsi DNS_Server punya service unit 'server'
+DNS_Client=$(get_service_status client) # Asumsi DNS_Client punya service unit 'client'
+OpenVPN_Websocket=$(get_service_status ws-ovpn) # Jika sama dengan SSH_Websocket
+
+# XRAY services (asumsi mereka di-handle oleh xray.service utama)
+XRAY_Service=$(get_service_status xray) # Check main xray service status
+
+# Shadowsocks services (asumsi ss-libev adalah nama service utamanya)
+Shadowsocks_Service=$(get_service_status ss-libev) 
+
+Iptables=$(get_service_status netfilter-persistent)
+Squid=$(get_service_status badvpn2) # Mengambil dari skrip Anda
+BadVPN=$(get_service_status badvpn1) # Mengambil dari skrip Anda
+RClocal=$(get_service_status rc-local)
+Autorebot=$(get_service_status rc-local) # Seringkali ini sama dengan rc-local
+
+# Fungsi untuk memformat status menjadi Online/Offline
+format_status() {
+    local status="$1"
+    if [[ "$status" == "running" || "$status" == "exited" ]]; then
+        echo "🟢 Online"
+    else
+        echo "🔴 Offline"
+    fi
+}
+
+status_1=$(format_status "$Open_SSH")
+status_2=$(format_status "$Dropbear")
+status_4=$(format_status "$SSH_Websocket")
+status_5=$(format_status "$OpenVPN")
+status_6=$(format_status "$Nginx_Webserver")
+status_8=$(format_status "$DNS_Server")
+status_9=$(format_status "$DNS_Client")
+status_10=$(format_status "$OpenVPN_Websocket")
+
+# Status Xray terpusat (karena banyak service Xray mungkin di-handle oleh satu xray.service)
+status_xray_vmess_tls=$(format_status "$XRAY_Service")
+status_xray_vmess_grpc=$(format_status "$XRAY_Service")
+status_xray_vmess_none_tls=$(format_status "$XRAY_Service")
+status_xray_vless_tls=$(format_status "$XRAY_Service")
+status_xray_vless_grpc=$(format_status "$XRAY_Service")
+status_xray_vless_none_tls=$(format_status "$XRAY_Service")
+status_trojan_grpc=$(format_status "$XRAY_Service")
+status_trojan_ws=$(format_status "$XRAY_Service")
+
+status_19=$(format_status "$Shadowsocks_Service") # Menggunakan status Shadowsocks_Service
+status_20=$(format_status "$Shadowsocks_Service") # Menggunakan status Shadowsocks_Service
+
+status_21=$(format_status "$Iptables")
+status_22=$(format_status "$Squid")
+status_23=$(format_status "$BadVPN")
+status_24=$(format_status "$RClocal")
+status_25=$(format_status "$Autorebot")
+
+# // Information user
+myip=$(curl -sS ipv4.icanhazip.com)
+url_izin="https://raw.githubusercontent.com/kdg-hss/izin-tele/main/izin" # Asumsi URL ini valid dan dapat diakses
+username_script="N/A" # Default
+exp_script="N/A" # Default
+certifacate_days="N/A" # Default
+
+# Coba ambil info izin dari URL
+if curl --output /dev/null --silent --head --fail "$url_izin"; then
+    izin_data=$(curl -sS "$url_izin" | grep "$myip")
+    if [[ -n "$izin_data" ]]; then
+        username_script=$(echo "$izin_data" | awk '{print $2}')
+        exp_script=$(echo "$izin_data" | awk '{print $3}')
+        # Calculate certificate days
+        d1=$(date -d "$exp_script" +%s 2>/dev/null)
+        d2=$(date +%s) # Current date
+        if [[ -n "$d1" && "$d1" -gt "$d2" ]]; then
+            certifacate_days=$(( (d1 - d2) / 86400 ))
+        else
+            certifacate_days="Expired / N/A" # Jika tanggal kedaluwarsa sudah lewat atau tidak valid
+        fi
+    fi
+fi
+
+# Build the TEXT for Telegram output
+# Menggunakan tag <code> untuk format monospaced dan <br> untuk baris baru
+TEXT="<code>━━━━━━━━━━━━━━━━━━━━━━━</code>
+<code>   👨‍💻PREMIUM PANEL INFO👨‍💻</code>
+<code>━━━━━━━━━━━━━━━━━━━━━━━</code>
+<code>🔰 » Client Name  : ${username_script}</code>
+<code>🔰 » Total RAM    : ${tram} MB</code>
+<code>🔰 » City Server  : ${CITY}</code>
+<code>🔰 » Domain       : ${domain}</code>
+<code>🔰 » Exp Script   : ${exp_script} ( ${certifacate_days} days left )</code>
+<code>🔰 » Version BOT  : Version 2.0.1</code>
+<code>━━━━━━━━━━━━━━━━━━━━━━━</code>
+<code>   👨‍💻 SERVICE VPS STATUS 👨‍💻</code>
+<code>━━━━━━━━━━━━━━━━━━━━━━━</code>
+<code>Open_SSH        : ${status_1}</code>
+<code>Dropbear        : ${status_2}</code>
+<code>SSH_Websocket   : ${status_4}</code>
+<code>OpenVPN         : ${status_5}</code>
+<code>Nginx_Webserver : ${status_6}</code>
+<code>OpenVPN_WS      : ${status_10}</code>
+<code>Xray_Vmess      : ${status_xray_vmess_tls}</code>
+<code>Xray_Vless      : ${status_xray_vless_tls}</code>
+<code>Trojan_WS       : ${status_trojan_ws}</code>
+<code>Shadowsocks     : ${status_19}</code>
+<code>Iptables        : ${status_21}</code>
+<code>Squid           : ${status_22}</code>
+<code>BadVPN          : ${status_23}</code>
+<code>RClocal         : ${status_24}</code>
+<code>Autoreboot      : ${status_25}</code>
+<code>━━━━━━━━━━━━━━━━━━━━━━━</code>
+"
+# Cetak TEXT ke standard output agar bot Python bisa menangkapnya
+echo "$TEXT"

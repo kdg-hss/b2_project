@@ -1,0 +1,111 @@
+#!/bin/bash
+
+# =================================================================================
+# Skrip Restore VPS yang Diperbaiki dan Dibuat Lebih Aman
+# - Menerima link sebagai argumen.
+# - Hanya me-restore file/direktori yang ada di dalam backup.
+# - Menyesuaikan path dengan konfigurasi server saat ini.
+# =================================================================================
+
+# --- Validasi Argumen ---
+if [ -z "$1" ]; then
+    echo "Error: Link download backup tidak disediakan."
+    echo "Penggunaan: $0 <URL_BACKUP_ZIP>"
+    exit 1
+fi
+
+DATAVPS="$1"
+
+# --- Cek Dependensi ---
+if ! command -v wget &> /dev/null || ! command -v unzip &> /dev/null; then
+    echo "Error: 'wget' atau 'unzip' tidak terinstal. Silakan instal terlebih dahulu."
+    echo "sudo apt-get install wget unzip -y"
+    exit 1
+fi
+
+# --- Mulai Proses Restore ---
+echo "Memulai proses restore dari link..."
+cd /root
+
+# Hapus backup lama jika ada
+rm -f backup.zip
+rm -rf backup
+
+# Unduh file backup
+wget -O backup.zip "$DATAVPS"
+if [ $? -ne 0 ]; then
+    echo "Error: Gagal mengunduh file backup dari link yang diberikan."
+    rm -f backup.zip
+    exit 1
+fi
+
+# Ekstrak file backup
+unzip -o backup.zip
+if [ $? -ne 0 ]; then
+    echo "Error: Gagal mengekstrak file backup.zip. Pastikan file tidak korup."
+    rm -f backup.zip
+    exit 1
+fi
+
+# --- Proses Penimpaan File (dengan Pengecekan) ---
+echo "Menimpa file sistem dengan data dari backup..."
+
+# Fungsi untuk menyalin jika sumber ada
+copy_if_exists() {
+    SRC=$1
+    DEST=$2
+    if [ -e "$SRC" ]; then
+        cp -r "$SRC" "$DEST"
+        echo "  - Berhasil restore: $SRC"
+    fi
+}
+
+# Restore file-file sistem dasar
+copy_if_exists /root/backup/passwd /etc/
+copy_if_exists /root/backup/group /etc/
+copy_if_exists /root/backup/shadow /etc/
+copy_if_exists /root/backup/gshadow /etc/
+
+# Restore database bot utama
+copy_if_exists /root/backup/jualan.db /usr/bin/
+
+# Restore direktori web
+if [ -d /root/backup/html ]; then
+    mkdir -p /home/vps/public_html
+    cp -r /root/backup/html/* /home/vps/public_html/
+    echo "  - Berhasil restore: direktori web"
+fi
+
+# Restore database text akun
+copy_if_exists /root/backup/ssh.db /etc/ssh/.ssh.db
+copy_if_exists /root/backup/vmess.db /etc/vmess/.vmess.db
+copy_if_exists /root/backup/vless.db /etc/vless/.vless.db
+copy_if_exists /root/backup/trojan.db /etc/trojan/.trojan.db
+copy_if_exists /root/backup/shadowsocks.db /etc/shadowsocks/.shadowsocks.db
+
+# Restore konfigurasi Xray
+if [ -d /root/backup/xray ]; then
+    rm -rf /etc/xray/*
+    cp -r /root/backup/xray/* /etc/xray/
+    echo "  - Berhasil restore: konfigurasi Xray"
+fi
+
+# --- Finalisasi ---
+echo "Me-restart semua layanan terkait..."
+systemctl restart xray >/dev/null 2>&1
+systemctl restart nginx >/dev/null 2>&1
+systemctl restart julak.service >/dev/null 2>&1
+
+# Bersihkan file sementara
+rm -f /root/backup.zip
+rm -rf /root/backup
+
+echo ""
+echo "==================================="
+echo "✅ PROSES RESTORE SELESAI"
+echo "==================================="
+echo "Semua data dari file backup telah dikembalikan."
+echo "Layanan yang relevan telah di-restart."
+echo "Disarankan untuk mereboot VPS dengan perintah 'reboot' untuk memastikan semua perubahan diterapkan dengan sempurna."
+
+exit 0

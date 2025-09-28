@@ -1,0 +1,289 @@
+#!/bin/bash
+# Untuk bot SCPRO By julak bantur
+# Skrip ini membuat akun VMESS secara non-interaktif.
+# Menerima argumen: <username> <masa_aktif_hari> <batas_quota_gb> <batas_ip>
+
+# --- Ambil Argumen ---
+user="$1"
+masaaktif="$2"
+Quota="1000"
+iplimit="2"
+
+# --- Validasi Minimal Argumen ---
+if [ -z "$user" ] || [ -z "$masaaktif" ]; then
+    echo "Error: Penggunaan: bash $0 <username> <masa_aktif_hari>"
+    echo "Contoh: bash $0 myuser 30 10 2"
+    exit 1
+fi
+
+# Validasi format username
+if [[ ! "$user" =~ ^[a-zA-Z0-9_]+$ ]]; then
+    echo "Error: Username mengandung karakter yang tidak valid! Hanya huruf, angka, dan underscore."
+    exit 1
+fi
+
+# Validasi masa_aktif_hari, Quota, dan iplimit adalah angka
+if ! [[ "$masaaktif" =~ ^[0-9]+$ ]]; then
+    echo "Error: Masa aktif harus berupa angka."
+    exit 1
+fi
+if ! [[ "$Quota" =~ ^[0-9]+$ ]]; then
+    echo "Error: Batas kuota (GB) harus berupa angka."
+    exit 1
+fi
+if ! [[ "$iplimit" =~ ^[0-9]+$ ]]; then
+    echo "Error: Batas pengguna (IP) harus berupa angka."
+    exit 1
+fi
+
+# --- Definisi Variabel yang Dibaca dari File atau Dihasilkan ---
+# Tambahkan fallback jika file tidak ada untuk mencegah error skrip
+#NS=$(cat /etc/xray/dns 2>/dev/null || echo "your_default_slowdns_domain.com") # Sesuai skrip lama, meskipun tidak dipakai di vmess
+#PUB=$(cat /etc/slowdns/server.pub 2>/dev/null || echo "your_default_slowdns_public_key") # Sesuai skrip lama
+CHATID=$(grep -E "^#bot# " "/etc/bot/.bot.db" | cut -d ' ' -f 3 2>/dev/null || echo "YOUR_DEFAULT_CHATID")
+KEY=$(grep -E "^#bot# " "/etc/bot/.bot.db" | cut -d ' ' -f 2 2>/dev/null || echo "YOUR_DEFAULT_BOT_KEY")
+
+export TIME="10"
+export URL="https://api.telegram.org/bot$KEY/sendMessage"
+
+# Mendapatkan Domain/IP
+source /var/lib/julak/ipvps.conf 2>/dev/null || true # Sumber ini mungkin perlu divalidasi
+if [[ -z "$IP" ]]; then # Memeriksa apakah IP kosong
+    domain=$(cat /etc/xray/domain 2>/dev/null || curl -sS ipv4.icanhazip.com) # Fallback ke domain atau IP publik
+else
+    domain=$IP
+fi
+
+# --- Logika Pembuatan Akun (Diadaptasi dari skrip VMess Anda) ---
+
+# Cek apakah username ada di /etc/xray/config.json
+CLIENT_EXISTS=$(grep -w $user /etc/xray/config.json | wc -l)
+if [[ ${CLIENT_EXISTS} == '1' ]]; then
+    echo "Error: Akun dengan username ${user} sudah ada, silakan pilih nama lain."
+    exit 1
+fi
+
+uuid=$(cat /proc/sys/kernel/random/uuid)
+
+# Hitung tanggal kedaluwarsa
+tgl=$(date -d "$masaaktif days" +"%d")
+bln=$(date -d "$masaaktif days" +"%b")
+thn=$(date -d "$masaaktif days" +"%Y")
+expe="$tgl $bln, $thn"
+tgl2=$(date +"%d")
+bln2=$(date +"%b")
+thn2=$(date +"%Y")
+tnggl="$tgl2 $bln2, $thn2"
+exp=`date -d "$masaaktif days" +"%Y-%m-%d"`
+
+# Tambahkan konfigurasi ke Xray
+sed -i '/#vmess$/a\#vm '"$user $exp $uuid"'\
+},{"id": "'""$uuid""'","alterId": '"0"',"email": "'""$user""'"' /etc/xray/config.json
+sed -i '/#vmessgrpc$/a\#vmg '"$user $exp $uuid"'\
+},{"id": "'""$uuid""'","alterId": '"0"',"email": "'""$user""'"' /etc/xray/config.json
+
+# Bangun konfigurasi JSON untuk Vmess Link
+asu=`cat<<EOF
+      {
+      "v": "2",
+      "ps": "${user}",
+      "add": "${domain}",
+      "port": "443",
+      "id": "${uuid}",
+      "aid": "0",
+      "net": "ws",
+      "path": "/vmess",
+      "type": "none",
+      "host": "${domain}",
+      "tls": "tls",
+      "sni": "${domain}"
+}
+EOF`
+ask=`cat<<EOF
+      {
+      "v": "2",
+      "ps": "${user}",
+      "add": "${domain}",
+      "port": "80",
+      "id": "${uuid}",
+      "aid": "0",
+      "net": "ws",
+      "path": "/vmess",
+      "type": "none",
+      "host": "${domain}",
+      "tls": "none"
+}
+EOF`
+grpc=`cat<<EOF
+      {
+      "v": "2",
+      "ps": "${user}",
+      "add": "${domain}",
+      "port": "443",
+      "id": "${uuid}",
+      "aid": "0",
+      "net": "grpc",
+      "path": "vmess-grpc",
+      "type": "none",
+      "host": "${domain}",
+      "tls": "tls",
+      "sni": "${domain}"
+}
+EOF`
+
+# Encode Vmess Link ke Base64
+vmesslink1="vmess://$(echo "$asu" | base64 -w 0)"
+vmesslink2="vmess://$(echo "$ask" | base64 -w 0)"
+vmesslink3="vmess://$(echo "$grpc" | base64 -w 0)"
+
+# Restart service Xray dan Cron
+systemctl restart xray > /dev/null 2>&1
+service cron restart > /dev/null 2>&1
+
+# Buat file detail akun di public_html
+mkdir -p /home/vps/public_html/ # Pastikan direktori ini ada dan dapat ditulis
+cat >/home/vps/public_html/vmess-$user.txt <<-END
+---------------------------------------------------
+Tomket Tunneling 
+---------------------------------------------------
+# Format Vmess WS TLS
+
+- name: Vmess-$user-WS TLS
+  type: vmess
+  server: ${domain}
+  port: 443
+  uuid: ${uuid}
+  alterId: 0
+  cipher: auto
+  udp: true
+  tls: true
+  skip-cert-verify: true
+  servername: ${domain}
+  network: ws
+  ws-opts:
+    path: /vmess
+    headers:
+      Host: ${domain}
+
+# Format Vmess WS Non TLS
+
+- name: Vmess-$user-WS Non TLS
+  type: vmess
+  server: ${domain}
+  port: 80
+  uuid: ${uuid}
+  alterId: 0
+  cipher: auto
+  udp: true
+  tls: false
+  skip-cert-verify: false
+  servername: ${domain}
+  network: ws
+  ws-opts:
+    path: /vmess
+    headers:
+      Host: ${domain}
+
+# Format Vmess gRPC
+
+- name: Vmess-$user-gRPC (SNI)
+  server: ${domain}
+  port: 443
+  type: vmess
+  uuid: ${uuid}
+  alterId: 0
+  cipher: auto
+  network: grpc
+  tls: true
+  servername: ${domain}
+  skip-cert-verify: true
+  grpc-opts:
+    grpc-service-name: vmess-grpc
+
+---------------------------------------------------
+ Link Akun Vmess                   
+---------------------------------------------------
+Link TLS         : 
+${vmesslink1}
+---------------------------------------------------
+Link none TLS    : 
+${vmesslink2}
+---------------------------------------------------
+Link GRPC        : 
+${vmesslink3}
+---------------------------------------------------
+
+END
+
+# Buat direktori /etc/vmess jika belum ada
+if [ ! -e /etc/vmess ]; then
+  mkdir -p /etc/vmess
+fi
+
+# Handle IP Limit
+if [[ $iplimit -gt 0 ]]; then
+    mkdir -p /etc/julak/limit/vmess/ip # Pastikan direktori ini ada
+    echo -e "$iplimit" > /etc/julak/limit/vmess/ip/$user
+fi
+
+# Handle Kuota
+c=$(echo "${Quota}" | sed 's/[^0-9]*//g')
+d=$((${c} * 1024 * 1024 * 1024))
+
+if [[ ${c} != "0" ]]; then
+  echo "${d}" >/etc/vmess/${user}
+fi
+
+# Update database vmess
+DATADB=$(cat /etc/vmess/.vmess.db 2>/dev/null | grep "^###" | grep -w "${user}" | awk '{print $2}')
+if [[ "${DATADB}" != '' ]]; then
+  sed -i "/\b${user}\b/d" /etc/vmess/.vmess.db
+fi
+echo "### ${user} ${exp} ${uuid} ${Quota} ${iplimit}" >>/etc/vmess/.vmess.db
+
+# Bangun variabel TEXT untuk pesan Telegram (Ini yang akan dicetak ke stdout)
+TEXT="<code>---------------------------------------------------</code>
+<code>      XRAY/VMESS Account Info</code>
+<code>---------------------------------------------------</code>
+<code>Remarks   : ${user}
+Domain      : ${domain}
+Limit Quota : ${Quota} GB
+Limit IP    : ${iplimit} IP
+Port TLS    : 443
+Port NTLS   : 80, 8080
+id          : ${uuid}
+alterId     : 0
+Security    : auto
+network     : ws or grpc
+Path        : /Multi-Path
+Dynamic     : https://bugmu.com/path
+Name        : vmess-grpc</code>
+<code>---------------------------------------------------</code>
+<code> VMESS WS TLS Link</code>
+<code>---------------------------------------------------</code>
+<code>${vmesslink1}</code>
+<code>---------------------------------------------------</code>
+<code>VMESS WS NO TLS Link</code>
+<code>---------------------------------------------------</code>
+<code>${vmesslink2}</code>
+<code>---------------------------------------------------</code>
+<code> VMESS gRPC Link</code>
+<code>---------------------------------------------------</code>
+<code>${vmesslink3}</code>
+<code>---------------------------------------------------</code>
+Format OpenClash : https://${domain}:81/vmess-$user.txt
+<code>---------------------------------------------------</code>
+Aktif Selama   : ${masaaktif} Hari
+Dibuat Pada    : ${tnggl}
+Berakhir Pada  : ${expe}
+<code>---------------------------------------------------</code>
+<code> Terimakasih Telah Membeli Akun di Julak VPN</code>
+"
+# Tidak perlu curl -s --max-time $TIME -d "chat_id=$CHATID&disable_web_page_preview=1&text=$TEXT&parse_mode=html" $URL >/dev/null
+# Karena bot Python akan mengirim pesan ini.
+
+# Cetak TEXT ke standard output agar bot Python bisa menangkapnya
+echo "$TEXT"
+
+# Tidak perlu perintah `read -n 1 -s -r -p "Press any key to back on menu"` atau `menu`
+# karena skrip ini dijalankan non-interaktif oleh bot.

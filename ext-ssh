@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+# ext-ssh
+# Usage: ext-ssh <username> <days>
+# Example: /bot/julak/ext-ssh fajar 7
+# - updates system expiry via chage
+# - updates /etc/ssh/.ssh.db entries with format: "### <username> <password> <masaaktif>"
+set -euo pipefail
+
+if [ "$#" -lt 2 ]; then
+  echo "Usage: $0 <username> <days>"
+  exit 1
+fi
+
+USER="$1"
+DAYS="$2"
+
+# cek user ada
+if ! id "$USER" >/dev/null 2>&1; then
+  echo "❌ User $USER tidak ditemukan."
+  exit 2
+fi
+
+# ambil expiry sekarang dari chage
+LINE=$(chage -l "$USER" 2>/dev/null | grep -i "Account expires" || true)
+CUR_EXP="$(echo "$LINE" | cut -d: -f2- | sed 's/^ *//g' || true)"
+if [ -z "$CUR_EXP" ]; then
+  CUR_EXP="never"
+fi
+
+# hitung expiry baru (YYYY-MM-DD)
+# jika CUR_EXP adalah "never" atau tidak terbaca, gunakan sekarang + DAYS
+if echo "$CUR_EXP" | grep -iq "never"; then
+  NEW_EXP=$(date -d "+${DAYS} days" +%Y-%m-%d)
+else
+  # coba interpret tanggal yang ada, jika gagal fallback ke now + DAYS
+  if NEW_EXP=$(date -d "${CUR_EXP} +${DAYS} days" +%Y-%m-%d 2>/dev/null); then
+    :
+  else
+    NEW_EXP=$(date -d "+${DAYS} days" +%Y-%m-%d)
+  fi
+fi
+
+# apply chage
+chage -E "$NEW_EXP" "$USER"
+
+# Update /etc/ssh/.ssh.db jika ada
+DB="/etc/ssh/.ssh.db"
+if [ -f "$DB" ]; then
+  TMPDB="$(mktemp)"
+  UPDATED=0
+
+  # proses tiap baris
+  # asumsi format: ### <username> <password> <masaaktif>
+  awk -v user="$USER" -v newexp="$NEW_EXP" '
+  BEGIN { OFS=" " }
+  {
+    if ($1 == "###" && $2 == user) {
+      # pastikan ada minimal 4 field; jika kurang, isi kosong untuk field yang kurang
+      pw = ($3 == "" ? "-" : $3)
+      # reconstruct with new expiry as 4th field; keep any extra fields after 4th unchanged (appended)
+      extra = ""
+      for (i=5; i<=NF; i++) extra = extra " " $i
+      print "###", $2, pw, newexp extra
+      UPDATED=1
+    } else {
+      print $0
+    }
+  }
+  END {
+    # pass UPDATED status via exit code not possible in awk easily; we will check later by comparing files
+  }' "$DB" > "$TMPDB" || { rm -f "$TMPDB"; echo "❌ Gagal memperbarui $DB"; exit 3; }
+
+  # check if change actually made by comparing
+  if ! cmp -s "$DB" "$TMPDB"; then
+    mv "$TMPDB" "$DB"
+    chmod 600 "$DB"
+    echo "✅ File $DB diperbarui untuk user $USER"
+  else
+    rm -f "$TMPDB"
+    echo "ℹ️ Tidak ada entry di $DB untuk user $USER atau sudah up-to-date."
+  fi
+else
+  echo "⚠️ $DB tidak ditemukan — lewati update DB."
+fi
+
+# output hasil ke stdout (untuk bot)
+echo "✅ SSH account diperpanjang"
+echo "👤 Username : $USER"
+echo "📅 Expiry sebelumnya : $CUR_EXP"
+echo "⏳ Expiry baru       : $NEW_EXP"
+exit 0

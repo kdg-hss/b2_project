@@ -1,0 +1,46 @@
+#!/bin/bash
+# del-trojan.sh
+# Usage: ./del-trojan.sh <username>
+
+USER=$1
+CONFIG="/etc/xray/config.json"
+DB="/etc/trojan/.trojan.db"
+
+if [[ -z "$USER" ]]; then
+    echo "Usage: $0 <username>"
+    exit 1
+fi
+
+# cek apakah user ada
+if ! grep -qw "$USER" "$CONFIG"; then
+    echo "❌ User $USER tidak ditemukan di $CONFIG"
+    exit 1
+fi
+
+# ambil tanggal exp (kolom ke-3 setelah ###)
+EXP=$(grep -w "^#tr $USER" "$CONFIG" | awk '{print $3}')
+
+# hapus di config.json
+sed -i "/^#tr $USER $EXP/,/^},{/d" $CONFIG
+sed -i "/^#trg $USER $EXP/,/^},{/d" $CONFIG
+
+# hapus di db
+if [[ -f "$DB" ]]; then
+    sed -i "/^### $USER $EXP/,/^},{/d" $DB
+fi
+
+# hapus file user
+rm -rf /etc/trojan/$USER
+rm -rf /etc/julak/limit/trojan/ip/$USER
+rm -rf /home/vps/public_html/trojan-$USER.txt
+
+# restart xray
+systemctl restart xray > /dev/null 2>&1
+
+# hasil
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "✅ Trojan Account Deleted Successfully"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo " Client Name : $USER"
+echo " Expired On  : $EXP"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

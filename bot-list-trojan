@@ -1,0 +1,19 @@
+#!/bin/bash
+
+# Skrip untuk menampilkan daftar user Trojan dari config.json
+
+echo "==================================="
+echo "     DAFTAR PENGGUNA TROJAN"
+echo "==================================="
+echo "Username           | Exp. Date"
+echo "-----------------------------------"
+
+# Menggunakan grep untuk mencari penanda user dan cut untuk mengambil kolom 2 & 3
+# Ini aman karena hanya membaca, tidak mengubah file.
+grep -E "^#trg " "/etc/xray/config.json" | cut -d ' ' -f 2,3 | column -t | sort | uniq
+
+if [ $? -ne 0 ] || [ $(grep -c -E "^#trg " "/etc/xray/config.json") -eq 0 ]; then
+    echo "Tidak ada pengguna Trojan yang ditemukan."
+fi
+
+echo "==================================="

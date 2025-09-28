@@ -1,0 +1,46 @@
+#!/bin/bash
+# del-vmess.sh
+# Usage: ./del-vmess.sh <username>
+
+USER=$1
+CONFIG="/etc/xray/config.json"
+DB="/etc/vmess/.vmess.db"
+
+if [[ -z "$USER" ]]; then
+    echo "Usage: $0 <username>"
+    exit 1
+fi
+
+# cek apakah user ada
+if ! grep -qw "$USER" "$CONFIG"; then
+    echo "❌ User $USER tidak ditemukan di $CONFIG"
+    exit 1
+fi
+
+# ambil tanggal exp (kolom ke-3 setelah ###)
+EXP=$(grep -w "^#vm $USER" "$CONFIG" | awk '{print $3}')
+
+# hapus di config.json
+sed -i "/^#vm $USER $EXP/,/^},{/d" $CONFIG
+sed -i "/^#vmg $USER $EXP/,/^},{/d" $CONFIG
+
+# hapus di db
+if [[ -f "$DB" ]]; then
+    sed -i "/^### $USER $EXP/,/^},{/d" $DB
+fi
+
+# hapus file user
+rm -rf /etc/vmess/$USER
+rm -rf /etc/julak/limit/vmess/ip/$USER
+rm -rf /home/vps/public_html/vmess-$USER.txt
+
+# restart xray
+systemctl restart xray > /dev/null 2>&1
+
+# hasil
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "✅ Vmess Account Deleted Successfully"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo " Client Name : $USER"
+echo " Expired On  : $EXP"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

@@ -1,0 +1,67 @@
+#!/bin/bash
+
+# =================================================================================
+# Skrip aman untuk membuat akun VMess trial menggunakan JQ dan auto-delete
+# =================================================================================
+
+# --- Parameter Trial ---
+masaaktif_jam=24 # Trial berlaku selama 2 jam
+user=Trial-VM`cat /dev/urandom | tr -dc 'A-Z0-9' | head -c4`
+
+# --- Variabel ---
+uuid=$(cat /proc/sys/kernel/random/uuid)
+exp_at=$(date -d "+${masaaktif_jam} hours" +"%Y-%m-%d %H:%M:%S")
+exp_for_db=$(date -d "+${masaaktif_jam} hours" +"%Y-%m-%d")
+domain=$(cat /etc/xray/domain)
+CONFIG_FILE="/etc/xray/config.json"
+TMP_FILE="/tmp/config.json.tmp"
+DB_FILE="/etc/vmess/.vmess.db"
+
+# --- Cek Duplikat ---
+mkdir -p /etc/vmess; touch "$DB_FILE"
+if grep -q -w "$user" "$DB_FILE"; then
+    echo "Error: Gagal membuat username trial unik. Coba lagi."
+    exit 1
+fi
+
+# --- Buat Objek JSON untuk Klien Baru ---
+sed -i '/#vmess$/a\#vm '"$user $exp_for_db $uuid"'\
+},{"id": "'""$uuid""'","alterId": '"0"',"email": "'""$user""'"' /etc/xray/config.json
+exp=`date -d "$masaaktif days" +"%Y-%m-%d"`
+sed -i '/#vmessgrpc$/a\#vmg '"$user $exp_for_db $uuid"'\
+},{"id": "'""$uuid""'","alterId": '"0"',"email": "'""$user""'"' /etc/xray/config.json
+
+# --- Simpan Data ke Database Teks ---
+echo "### $user $exp_for_db $uuid" >> "$DB_FILE"
+
+# --- Jadwalkan Penghapusan Otomatis ---
+systemctl enable --now atd > /dev/null 2>&1
+echo "sudo /bot/julak/bot-del-vmess '$user'" | at now + ${masaaktif_jam} hours 2>/dev/null
+
+# --- Buat Link Konfigurasi ---
+vmesslink_ws="vmess://$(echo -n "{\"v\": \"2\", \"ps\": \"${user}\", \"add\": \"${domain}\", \"port\": \"443\", \"id\": \"${uuid}\", \"aid\": 0, \"net\": \"ws\", \"path\": \"/vmess\", \"type\": \"none\", \"host\": \"${domain}\", \"tls\": \"tls\", \"sni\": \"${domain}\"}" | base64 -w 0)"
+vmesslink_grpc="vmess://$(echo -n "{\"v\": \"2\", \"ps\": \"${user}\", \"add\": \"${domain}\", \"port\": \"443\", \"id\": \"${uuid}\", \"aid\": 0, \"net\": \"grpc\", \"path\": \"vmess-grpc\", \"type\": \"none\", \"host\": \"${domain}\",\"tls\": \"tls\", \"sni\": \"${domain}\"}" | base64 -w 0)"
+
+# --- Restart Layanan ---
+systemctl restart xray
+
+# --- Tampilkan Output Bersih untuk Bot ---
+echo "✅ Akun Trial VMess Berhasil Dibuat"
+echo "==================================="
+echo "Username   : ${user}"
+echo "Domain     : ${domain}"
+echo "Port TLS   : 443"
+echo "Port NTLS  : 80"
+echo "Path       : /vmess"
+echo "UUID       : ${uuid}"
+echo "-----------------------------------"
+echo "Link VMess WS:"
+echo "${vmesslink_ws}"
+echo "-----------------------------------"
+echo "Link VMess gRPC:"
+echo "${vmesslink_grpc}"
+echo "-----------------------------------"
+echo "Berlaku    : ${masaaktif_jam} jam"
+echo "Expired    : ${exp_at}"
+echo "==================================="
+
