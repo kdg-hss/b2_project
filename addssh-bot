@@ -1,11 +1,7 @@
 #!/bin/bash
-
 # =================================================================================
-# Skrip ini disesuaikan untuk dipanggil oleh Bot Telegram CSPRO.
-# Dibuat oleh Julak Bantur - Disesuaikan oleh Guru nya yaitu AI.
-# Interaktivitas dihapus, input diambil dari argumen baris perintah.
-# Output dibersihkan untuk ditampilkan di Telegram.
-# FIX v2: Menambahkan 'touch' untuk mencegah error 'file not found' pada .ssh.db
+# Script ini disesuaikan untuk dipanggil oleh Bot Telegram B2 dan script local LTS2.
+# Dibuat dan di sesuaikan oleh Julak Bantur (JulakVPN).
 # =================================================================================
 
 # --- Ambil Input dari Argumen ---
@@ -18,6 +14,8 @@ iplimit="2"
 # --- Pengaturan Variabel Server ---
 IP=$(curl -sS ipv4.icanhazip.com)
 domain=$(cat /etc/xray/domain)
+NS=$(cat /etc/xray/dns)
+PUB=$(cat /etc/slowdns/server.pub)
 tgl=$(date -d "$masaaktif days" +"%d")
 bln=$(date -d "$masaaktif days" +"%b")
 thn=$(date -d "$masaaktif days" +"%Y")
@@ -26,6 +24,7 @@ tgl2=$(date +"%d")
 bln2=$(date +"%b")
 thn2=$(date +"%Y")
 tnggl="$tgl2 $bln2, $thn2"
+exp=`date -d "$masaaktif days" +"%Y-%m-%d"`
 
 # --- Proses Pembuatan User ---
 # Menambahkan user dengan tanggal kadaluarsa
@@ -43,6 +42,12 @@ fi
 # Pastikan direktori ada
 if [ ! -e /etc/ssh ]; then
     mkdir -p /etc/ssh
+fi
+
+# --- Database Akun ssh
+# Pastikan direktori ada
+if [ ! -e /etc/akun ]; then
+    mkdir -p /etc/akun
 fi
 
 # Jika Quota kosong atau 0, set ke "0"
@@ -64,40 +69,43 @@ fi
 touch /etc/ssh/.ssh.db
 # Hapus data lama jika ada, lalu tambahkan data baru
 sed -i "/\b${Login}\b/d" /etc/ssh/.ssh.db
-echo "#ssh# ${Login} ${Pass} ${Quota} ${iplimit} ${expe}" >>/etc/ssh/.ssh.db
+echo "### ${Login} ${exp} ${Pass}" >>/etc/ssh/.ssh.db
 
 # --- Membuat File Detail Akun untuk Web Download ---
 cat > "/home/vps/public_html/ssh-$Login.txt" <<-END
----------------------------------------------------
-       Julak Bantur - Akun SSH & OVPN
----------------------------------------------------
+---------------------
+Format SSH OVPN Account
+---------------------
 Username         : $Login
 Password         : $Pass
----------------------------------------------------
-IP Address       : $IP
+Expired          : $expe
+---------------------
 Host             : $domain
----------------------------------------------------
-Port OpenSSH     : 22, 200
-Port Dropbear    : 109, 143
-Port Udp Custom  : 1-65535
-Port SSL/TLS     : 443
+Host Slowdns     : ${NS}
+Pub Key          : ${PUB}
+Port Slow Dns    : 80, 22, 53
+Port Open SSH    : 22
+Port SSH UDP     : 1-65535,1-7200,1-7300,1-10000
+Port Dropbear    : 143, 109
+Port Dropbear WS : 109, 80, 8080
 Port SSH WS      : 80, 8080
 Port SSH SSL WS  : 443
-Port OVPN TCP    : 1194, 443
+Port SSL/TLS     : 8443, 8880
+Port OVPN SSL    : 990
+Port OVPN TCP    : 1194
 Port OVPN UDP    : 2200
-BadVPN UDP       : 7100, 7200, 7300
----------------------------------------------------
-Link Download OVPN:
-http://$domain:81/udp.ovpn
-http://$domain:81/tcp.ovpn
----------------------------------------------------
-Payload Websocket (WSS):
-GET wss://[host_anda]/ HTTP/1.1[crlf]Host: $domain[crlf]Upgrade: websocket[crlf][crlf]
----------------------------------------------------
-Aktif Selama     : $masaaktif Hari
-Dibuat Pada      : $tnggl
-Berakhir Pada    : $expe
----------------------------------------------------
+BadVPN UDP       : 7100, 7300, 7300
+---------------------
+Link OVPN SSL    : http://$domain:89/ssl.ovpn
+Link OVPN TCP    : http://$domain:89/tcp.ovpn
+Link OVPN UDP    : http://$domain:89/udp.ovpn
+---------------------
+SSH UDP CUSTOM : $domain:1-10000@$Login:$Pass
+---------------------
+Payload WSS: GET wss://[host]/ HTTP/1.1[crlf]Host: bug.com[crlf]Upgrade: websocket[crlf][crlf] 
+---------------------
+AutoScript By JulakVPN
+---------------------
 END
 
 # --- Cetak Output untuk Bot Telegram ---
@@ -111,23 +119,34 @@ echo "-----------------------------------"
 echo "Username        : $Login"
 echo "Password        : $Pass"
 echo "-----------------------------------"
-echo "Host            : $domain"
 echo "IP Address      : $IP"
+echo "Host            : $domain"
+echo "Host Slowdns    : $NS"
+echo "Public Key      : $PUB"
 echo "Limit IP        : $iplimit Pengguna"
 echo "Limit Kuota     : $Quota GB"
 echo "Port OpenSSH    : 22, 200"
+echo "Port Slowdns    : 80, 22, 53, 5300"
 echo "Port Dropbear   : 109, 143"
 echo "Port Udp Custom : 1-65535, 1-7000, 1-10000"
-echo "Port SSL/TLS    : 443"
+echo "Port SSL/TLS    : 8443, 8880"
 echo "Port WS         : 80, 8080"
 echo "Port WSS/SSL    : 443"
+echo "Port OVPN SSL   : 990"
 echo "Port OVPN TCP   : 1194"
 echo "Port OVPN UDP   : 2200"
 echo "BadVPN          : 7100, 7200, 7300"
 echo "-----------------------------------"
-echo "Link OVPN UDP   : http://$domain:81/udp.ovpn"
-echo "Link OVPN TCP   : http://$domain:81/tcp.ovpn"
-echo "Link Akun       : http://$domain:81/ssh-$Login.txt"
+echo "Link OVPN UDP   : http://$domain:89/ssl.ovpn"
+echo "Link OVPN UDP   : http://$domain:89/udp.ovpn"
+echo "Link OVPN TCP   : http://$domain:89/tcp.ovpn"
+echo "-----------------------------------"
+echo "UDP CUSTOM      : "
+echo "$domain:1-10000@Login:Pass"
+echo "-----------------------------------"
+echo "PAYLOAD         : "
+echo "GET wss://[host]/ HTTP/1.1[crlf]Host: bug.com[crlf]Upgrade: websocket[crlf][crlf]"
+echo "Link Akun       : http://$domain:89/ssh-$Login.txt"
 echo "-----------------------------------"
 echo "Masa Aktif      : $masaaktif Hari"
 echo "Kadaluarsa      : $expe"
