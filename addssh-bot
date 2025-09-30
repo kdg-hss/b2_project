@@ -1,0 +1,159 @@
+#!/bin/bash
+# =================================================================================
+# Script ini disesuaikan untuk dipanggil oleh Bot Telegram B2 dan script local LTS2.
+# Dibuat dan di sesuaikan oleh Julak Bantur (JulakVPN).
+# =================================================================================
+
+# --- Ambil Input dari Argumen ---
+Login="$1"
+Pass="$2"
+masaaktif="$3"
+Quota="1000"
+iplimit="2"
+
+# --- Pengaturan Variabel Server ---
+IP=$(curl -sS ipv4.icanhazip.com)
+domain=$(cat /etc/xray/domain)
+NS=$(cat /etc/xray/dns)
+PUB=$(cat /etc/slowdns/server.pub)
+tgl=$(date -d "$masaaktif days" +"%d")
+bln=$(date -d "$masaaktif days" +"%b")
+thn=$(date -d "$masaaktif days" +"%Y")
+expe="$tgl $bln, $thn"
+tgl2=$(date +"%d")
+bln2=$(date +"%b")
+thn2=$(date +"%Y")
+tnggl="$tgl2 $bln2, $thn2"
+exp=`date -d "$masaaktif days" +"%Y-%m-%d"`
+
+# --- Proses Pembuatan User ---
+# Menambahkan user dengan tanggal kadaluarsa
+useradd -e `date -d "$masaaktif days" +"%Y-%m-%d"` -s /bin/false -M $Login
+# Mengatur password user
+echo -e "$Pass\n$Pass\n" | passwd $Login &> /dev/null
+
+# --- Pengaturan Limit IP ---
+if [[ "$iplimit" -gt 0 ]]; then
+    mkdir -p /etc/julak/limit/ssh/ip
+    echo "$iplimit" > /etc/julak/limit/ssh/ip/$Login
+fi
+
+# --- Pengaturan Limit Kuota ---
+# Pastikan direktori ada
+if [ ! -e /etc/ssh ]; then
+    mkdir -p /etc/ssh
+fi
+
+# --- Database Akun ssh
+# Pastikan direktori ada
+if [ ! -e /etc/akun ]; then
+    mkdir -p /etc/akun
+fi
+
+# Jika Quota kosong atau 0, set ke "0"
+if [ -z "${Quota}" ]; then
+    Quota="0"
+fi
+
+# Konversi GB ke bytes
+c=$(echo "${Quota}" | sed 's/[^0-9]*//g')
+d=$((${c} * 1024 * 1024 * 1024))
+
+# Tulis kuota jika tidak 0
+if [[ ${c} != "0" ]]; then
+    echo "${d}" > /etc/ssh/${Login}
+fi
+
+# --- Menyimpan ke Database Lokal ---
+# FIX: Pastikan file .ssh.db ada sebelum digunakan oleh sed
+touch /etc/ssh/.ssh.db
+# Hapus data lama jika ada, lalu tambahkan data baru
+sed -i "/\b${Login}\b/d" /etc/ssh/.ssh.db
+echo "### ${Login} ${exp} ${Pass}" >>/etc/ssh/.ssh.db
+
+# --- Membuat File Detail Akun untuk Web Download ---
+cat > "/home/vps/public_html/ssh-$Login.txt" <<-END
+---------------------
+Format SSH OVPN Account
+---------------------
+Username         : $Login
+Password         : $Pass
+Expired          : $expe
+---------------------
+Host             : $domain
+Host Slowdns     : ${NS}
+Pub Key          : ${PUB}
+Port Slow Dns    : 80, 22, 53
+Port Open SSH    : 22
+Port SSH UDP     : 1-65535,1-7200,1-7300,1-10000
+Port Dropbear    : 143, 109
+Port Dropbear WS : 109, 80, 8080
+Port SSH WS      : 80, 8080
+Port SSH SSL WS  : 443
+Port SSL/TLS     : 8443, 8880
+Port OVPN SSL    : 990
+Port OVPN TCP    : 1194
+Port OVPN UDP    : 2200
+BadVPN UDP       : 7100, 7300, 7300
+---------------------
+Link OVPN SSL    : http://$domain:89/ssl.ovpn
+Link OVPN TCP    : http://$domain:89/tcp.ovpn
+Link OVPN UDP    : http://$domain:89/udp.ovpn
+---------------------
+SSH UDP CUSTOM : $domain:1-10000@$Login:$Pass
+---------------------
+Payload WSS: GET wss://[host]/ HTTP/1.1[crlf]Host: bug.com[crlf]Upgrade: websocket[crlf][crlf] 
+---------------------
+AutoScript By JulakVPN
+---------------------
+END
+
+# --- Cetak Output untuk Bot Telegram ---
+# Output ini akan ditangkap oleh skrip Python dan dikirim ke pengguna.
+# Tidak ada lagi 'curl' atau kode warna di sini.
+
+echo "✅ Akun SSH & OVPN Berhasil Dibuat"
+echo "==================================="
+echo "Informasi Akun"
+echo "-----------------------------------"
+echo "Username        : $Login"
+echo "Password        : $Pass"
+echo "-----------------------------------"
+echo "IP Address      : $IP"
+echo "Host            : $domain"
+echo "Host Slowdns    : $NS"
+echo "Public Key      : $PUB"
+echo "Limit IP        : $iplimit Pengguna"
+echo "Limit Kuota     : $Quota GB"
+echo "Port OpenSSH    : 22, 200"
+echo "Port Slowdns    : 80, 22, 53, 5300"
+echo "Port Dropbear   : 109, 143"
+echo "Port Udp Custom : 1-65535, 1-7000, 1-10000"
+echo "Port SSL/TLS    : 8443, 8880"
+echo "Port WS         : 80, 8080"
+echo "Port WSS/SSL    : 443"
+echo "Port OVPN SSL   : 990"
+echo "Port OVPN TCP   : 1194"
+echo "Port OVPN UDP   : 2200"
+echo "BadVPN          : 7100, 7200, 7300"
+echo "-----------------------------------"
+echo "Link OVPN UDP   : http://$domain:89/ssl.ovpn"
+echo "Link OVPN UDP   : http://$domain:89/udp.ovpn"
+echo "Link OVPN TCP   : http://$domain:89/tcp.ovpn"
+echo "-----------------------------------"
+echo "UDP CUSTOM      : "
+echo "$domain:1-10000@$Login:$Pass"
+echo "-----------------------------------"
+echo "PAYLOAD         : "
+echo "GET wss://[host]/ HTTP/1.1[crlf]Host: bug.com[crlf]Upgrade: websocket[crlf][crlf]"
+echo "-----------------------------------"
+echo "Link Akun       : "
+echo "http://$domain:89/ssh-$Login.txt"
+echo "-----------------------------------"
+echo "Masa Aktif      : $masaaktif Hari"
+echo "Kadaluarsa      : $expe"
+echo "==================================="
+echo " Terimakasih Telah Membeli akun di Julak VPN"
+
+exit 0
+

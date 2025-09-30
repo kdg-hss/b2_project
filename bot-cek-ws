@@ -1,0 +1,88 @@
+#!/bin/bash
+
+# Fungsi konversi byte
+function con() {
+    local -i bytes=$1
+    if [[ $bytes -lt 1024 ]]; then
+        echo "${bytes}B"
+    elif [[ $bytes -lt 1048576 ]]; then
+        echo "$(( (bytes + 1023)/1024 ))KB"
+    elif [[ $bytes -lt 1073741824 ]]; then
+        echo "$(( (bytes + 1048575)/1048576 ))MB"
+    else
+        echo "$(( (bytes + 1073741823)/1073741824 ))GB"
+    fi
+}
+
+# Header output
+echo "==================================="
+echo "      VMESS USER LOGIN"
+echo "==================================="
+
+# =================================================================
+# PERUBAHAN 1: Cara menemukan pengguna Vmess disesuaikan
+# Mencari pengguna dengan penanda #vm atau #vmg
+# =================================================================
+data=( $(grep -E "^#vm |^#vmg " /etc/xray/config.json | cut -d ' ' -f 2 | sort | uniq) )
+
+for akun in "${data[@]}"; do
+    [[ -z "$akun" ]] && continue
+
+    # Menggunakan file temporary yang berbeda untuk vmess
+    echo -n > /tmp/ipvmess.txt
+    data2=( $(tail -n 500 /var/log/xray/access.log | cut -d " " -f 3 | sed 's/tcp://g' | cut -d ":" -f 1 | sort | uniq) )
+
+    for ip in "${data2[@]}"; do
+        jum=$(grep -w "$akun" /var/log/xray/access.log | tail -n 500 | cut -d " " -f 3 | sed 's/tcp://g' | cut -d ":" -f 1 | grep -w "$ip" | sort | uniq)
+        if [[ "$jum" == "$ip" ]]; then
+            echo "$jum" >> /tmp/ipvmess.txt
+        fi
+    done
+
+    jum=$(cat /tmp/ipvmess.txt)
+    if [[ -n "$jum" ]]; then
+        # =================================================================
+        # PERUBAHAN 2: Cara membaca file limit IP disesuaikan
+        # =================================================================
+        akun_file="/etc/julak/limit/vmess/ip/${akun}"
+        limit_file="/etc/limit/vmess/${akun}"
+        quota_file="/etc/vmess/${akun}"
+
+        # Data IP limit
+        if [[ -f "$akun_file" ]]; then
+            iplimit=$(cat "$akun_file")
+        else
+            iplimit="?"
+        fi
+
+        # Data limit & usage (Tidak ada perubahan di sini)
+        if [[ -f "$limit_file" ]]; then
+            wey=$(cat "$limit_file")
+            gb=$(con "$wey")
+        else
+            gb="0B"
+        fi
+
+        if [[ -f "$quota_file" ]]; then
+            byte=$(cat "$quota_file")
+            lim=$(con "$byte")
+        else
+            lim="0B"
+        fi
+
+        lastlogin=$(grep -w "$akun" /var/log/xray/access.log | tail -n 500 | cut -d " " -f 2 | tail -1)
+        jum2=$(wc -l < /tmp/ipvmess.txt)
+
+        # Tampilkan info akun
+        echo "-----------------------------------"
+        echo "UserName :" "$akun"
+        echo "Login    :" "$lastlogin"
+        echo "Usage Quota :" "$gb"
+        echo "Limit Quota :" "$lim"
+        echo "Limit IP :" "$iplimit"
+        echo "Login IP :" "$jum2"
+        echo "-----------------------------------"
+    fi
+
+    rm -f /tmp/ipvmess.txt
+done

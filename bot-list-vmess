@@ -1,0 +1,18 @@
+#!/bin/bash
+
+# Skrip untuk menampilkan daftar user VMess dari config.json
+
+echo "==================================="
+echo "     DAFTAR PENGGUNA VMESS"
+echo "==================================="
+echo "Username           | Exp. Date"
+echo "-----------------------------------"
+
+# Menggunakan grep untuk mencari penanda user VMess (###)
+grep -E "^#vmg " "/etc/xray/config.json" | cut -d ' ' -f 2,3 | column -t | sort | uniq
+
+if [ $? -ne 0 ] || [ $(grep -c -E "^#vmg " "/etc/xray/config.json") -eq 0 ]; then
+    echo "Tidak ada pengguna VMess yang ditemukan."
+fi
+
+echo "==================================="

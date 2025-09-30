@@ -1,0 +1,171 @@
+#!/bin/bash
+# =================================================================================
+# Skrip aman untuk membuat akun Vless
+# Dibuat dan disempurnakan oleh Julak Bantur
+# Project Bot : B2 + Script Local lts2
+# =================================================================================
+
+# --- Parameter Trial ---
+Quota=100
+iplimit=2
+masaaktif_jam=24 # Trial berlaku selama 2 jam
+user=Trial-VL`cat /dev/urandom | tr -dc 'A-Z0-9' | head -c4`
+
+# --- Variabel ---
+uuid=$(cat /proc/sys/kernel/random/uuid)
+exp_at=$(date -d "+${masaaktif_jam} hours" +"%Y-%m-%d %H:%M:%S")
+exp_for_db=$(date -d "+${masaaktif_jam} hours" +"%Y-%m-%d")
+domain=$(cat /etc/xray/domain)
+CONFIG_FILE="/etc/xray/config.json"
+TMP_FILE="/tmp/config.json.tmp"
+DB_FILE="/etc/vless/.vless.db"
+
+# --- Kirim (user masa aktif uuid) ke json xray sesuai path dan penanda yang sudah dibuat---
+sed -i '/#vless$/a\#vl '"$user $exp $uuid"'\
+},{"id": "'""$uuid""'","email": "'""$user""'"' /etc/xray/config.json
+sed -i '/#vlessgrpc$/a\#vlg '"$user $exp $uuid"'\
+},{"id": "'""$uuid""'","email": "'""$user""'"' /etc/xray/config.json
+
+# --- Jadwalkan Penghapusan Otomatis ---
+systemctl enable --now atd > /dev/null 2>&1
+echo "sudo /bot/julak/bot-delvless '$user'" | at now + ${masaaktif_jam} hours 2>/dev/null
+
+# --- Buat Link Konfigurasi ---
+vlesslink1="vless://${uuid}@${domain}:443?path=/vless&security=tls&encryption=none&host=${domain}&type=ws&sni=${domain}#${user}"
+vlesslink2="vless://${uuid}@${domain}:80?path=/vless&security=none&encryption=none&host=${domain}&type=ws#${user}"
+vlesslink3="vless://${uuid}@${domain}:443?mode=gun&security=tls&encryption=none&type=grpc&serviceName=vless-grpc&sni=${domain}#${user}"
+
+if [ ! -e /etc/vless ]; then
+  mkdir -p /etc/vless
+fi
+
+if [[ $iplimit -gt 0 ]]; then
+mkdir -p /etc/julak/limit/vless/ip
+echo -e "$iplimit" > /etc/julak/limit/vless/ip/$user
+else
+echo > /dev/null
+fi
+
+# Ensure Quota is treated as integer, if it was '0' convert to proper format if needed for scripts
+c=$(echo "${Quota}" | sed 's/[^0-9]*//g')
+d=$((${c} * 1024 * 1024 * 1024))
+
+if [[ ${c} != "0" ]]; then
+  echo "${d}" >/etc/vless/${user}
+fi
+
+# --- Simpan Data ke Database Teks ---
+echo "### $user $exp_for_db $uuid" >> "$DB_FILE"
+
+# Simpan data ke webserver 
+cat >/home/vps/public_html/vless-$user.txt <<-END
+
+---------------------
+Format Vless WS TLS
+---------------------
+- name: Vless-$user-WS TLS
+  server: ${domain}
+  port: 443
+  type: vless
+  uuid: ${uuid}
+  cipher: auto
+  tls: true
+  skip-cert-verify: true
+  servername: ${domain}
+  network: ws
+  ws-opts:
+    path: /vless
+    headers:
+      Host: bug.com
+
+---------------------
+Format Vless WS Non TLS
+---------------------
+- name: Vless-$user-WS (CDN) Non TLS
+  server: bug.com
+  port: 80
+  type: vless
+  uuid: ${uuid}
+  cipher: auto
+  tls: false
+  skip-cert-verify: false
+  servername: ${domain}
+  network: ws
+  ws-opts:
+    path: /vless
+    headers:
+      Host: ${domain}
+  udp: true
+
+---------------------
+Format Vless gRPC (SNI)
+---------------------
+- name: Vless-$user-gRPC (SNI)
+  server: ${domain}
+  port: 443
+  type: vless
+  uuid: ${uuid}
+  cipher: auto
+  tls: true
+  skip-cert-verify: true
+  servername: ${domain}
+  network: grpc
+  grpc-opts:
+  grpc-mode: gun
+    grpc-service-name: vless-grpc
+
+---------------------
+Link Akun Vless 
+---------------------
+Link TLS      : 
+${vlesslink1}
+---------------------
+Link none TLS : 
+${vlesslink2}
+---------------------
+Link GRPC     : 
+${vlesslink3}
+---------------------
+
+
+END
+
+# --- Tampilkan Output Bersih untuk Bot ---
+echo "✅ Akun Trial VLESS Berhasil Dibuat"
+echo "==================================="
+echo " Informasi Akun"
+echo -e "---------------------------------------------------"
+echo -e "Remarks         : ${user}"
+echo -e "Domain          : ${domain}"
+echo -e "User Quota      : ${Quota} GB"
+echo -e "User Ip         : ${iplimit} IP"
+echo -e "port TLS        : 443"
+echo -e "port GRPC       : 443"
+echo -e "port None TLS   : 80,8880"
+echo -e "User ID         : ${uuid}"
+echo -e "Encryption      : none"
+echo -e "Path            : /vless"
+echo -e "ServiceName     : vless-grpc"
+echo -e "---------------------------------------------------"
+echo -e "Link TLS        : "
+echo -e "${vlesslink1}"
+echo -e "---------------------------------------------------"
+echo -e "Link NTLS       : "
+echo -e "${vlesslink2}"
+echo -e "---------------------------------------------------"
+echo -e "Link GRPC       : "
+echo -e "${vlesslink3}"
+echo -e "---------------------------------------------------"
+echo -e "Format OpenClash: "
+echo -e "http://${domain}:89/vless-$user.txt"
+echo -e "---------------------------------------------------"
+echo -e "Aktif Selama    : ${masaaktif_jam} jam"
+echo -e "Berakhir Pada   : ${exp_at}"
+echo "==================================="
+echo -e "Gunakan Dengan Bijak - Dilarang di share publik"
+
+# Restart services at the end
+systemctl restart xray
+systemctl restart nginx
+
+exit 0

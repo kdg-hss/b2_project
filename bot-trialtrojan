@@ -1,0 +1,139 @@
+#!/bin/bash
+# Project Bot : B2
+# Dibuat oleh Julak Bantur (JulakVPN)
+# Script untuk membuat akun Trojan trial menggunakan JQ dan auto-delete
+# Kombinasi Untuk Script Local lts2 By JulakVPN
+
+# --- Parameter Trial ---
+Quota=100
+iplimit=2
+masaaktif_jam=24
+user=Trial-TR`cat /dev/urandom | tr -dc 'A-Z0-9' | head -c4`
+
+# --- Variabel ---
+uuid=$(cat /proc/sys/kernel/random/uuid)
+exp_at=$(date -d "+${masaaktif_jam} hours" +"%Y-%m-%d %H:%M:%S")
+exp_for_db=$(date -d "+${masaaktif_jam} hours" +"%Y-%m-%d")
+domain=$(cat /etc/xray/domain)
+CONFIG_FILE="/etc/xray/config.json"
+TMP_FILE="/tmp/config.json.tmp"
+DB_FILE="/etc/trojan/.trojan.db"
+
+# --- Cek Duplikat ---
+mkdir -p /etc/trojan; touch "$DB_FILE"
+if grep -q -w "$user" "$DB_FILE"; then
+    echo "Error: Gagal membuat username trial unik. Coba lagi."
+    exit 1
+fi
+
+# --- Buat Objek JSON untuk Klien Baru ---
+sed -i '/#trojanws$/a\#tr '"$user $exp_for_db $uuid"'\
+},{"password": "'""$uuid""'","email": "'""$user""'"' /etc/xray/config.json
+sed -i '/#trojangrpc$/a\#trg '"$user $exp_for_db $uuid"'\
+},{"password": "'""$uuid""'","email": "'""$user""'"' /etc/xray/config.json
+
+# --- Simpan Data ke Database Teks ---
+echo "### $user $exp_for_db $uuid" >> "$DB_FILE"
+
+# --- Jadwalkan Penghapusan Otomatis ---
+systemctl enable --now atd > /dev/null 2>&1
+echo "sudo /bot/julak/bot-del-trojan '$user'" | at now + ${masaaktif_jam} hours 2>/dev/null
+
+# --- Buat directory Limit IP dan Quota
+if [ ! -e /etc/trojan ]; then
+  mkdir -p /etc/trojan
+fi
+
+if [[ $iplimit -gt 0 ]]; then
+mkdir -p /etc/julak/limit/trojan/ip
+echo -e "$iplimit" > /etc/julak/limit/trojan/ip/$user
+else
+echo > /dev/null
+fi
+
+if [ -z ${Quota} ]; then
+  Quota="0"
+fi
+
+c=$(echo "${Quota}" | sed 's/[^0-9]*//g')
+d=$((${c} * 1024 * 1024 * 1024))
+
+if [[ ${c} != "0" ]]; then
+  echo "${d}" >/etc/trojan/${user}
+fi
+
+# --- Simpan Detail Akun ke Webserver 
+cat >/home/vps/public_html/trojan-$user.txt <<-END
+---------------------
+Format Trojan WS
+---------------------
+- name: Trojan-$user-GO/WS
+  server: ${domain}
+  port: 443
+  type: trojan
+  password: ${uuid}
+  network: ws
+  sni: ${domain}
+  skip-cert-verify: true
+  udp: true
+  ws-opts:
+    path: /trojan-ws
+    headers:
+        Host: ${domain}
+
+---------------------
+Format Trojan gRPC
+---------------------
+- name: Trojan-$user-gRPC
+  type: trojan
+  server: ${domain}
+  port: 443
+  password: ${uuid}
+  udp: true
+  sni: ${domain}
+  skip-cert-verify: true
+  network: grpc
+  grpc-opts:
+    grpc-service-name: trojan-grpc
+END
+
+# --- Buat Link Konfigurasi ---
+trojanlink_wss="trojan://${uuid}@${domain}:443?path=%2Ftrojan-ws&security=tls&host=${domain}&type=ws&sni=${domain}#${user}"
+trojanlink_ws="trojan://${uuid}@${domain}:80?path=%2Ftrojan-ws&security=auto&host=${domain}&type=ws#${user}"
+trojanlink_grpc="trojan://${uuid}@${domain}:443?mode=gun&security=tls&type=grpc&serviceName=trojan-grpc&sni=${domain}#${user}"
+
+# --- Restart Layanan ---
+systemctl restart xray
+
+# --- Tampilkan Output Bersih untuk Bot ---
+echo "✅ Akun Trial Trojan Berhasil Dibuat"
+echo "==================================="
+echo " Informasi Akun"
+echo -e "---------------------------------------------------"
+echo -e "Remarks         : ${user}"
+echo -e "Domain          : ${domain}"
+echo -e "User Quota      : ${Quota} GB"
+echo -e "User Ip         : ${iplimit} IP"
+echo -e "port TLS        : 443"
+echo -e "port GRPC       : 443"
+echo -e "port None TLS   : 80,8880"
+echo -e "User ID         : ${uuid}"
+echo -e "Path TLS        : /trojan-ws"
+echo -e "ServiceName     : trojan-grpc"
+echo -e "---------------------------------------------------"
+echo -e "Link TLS        : "
+echo -e "${trojanlink_wss} "
+echo -e "---------------------------------------------------"
+echo -e "Link NTLS       : "
+echo -e "${trojanlink_ws}"
+echo -e "---------------------------------------------------"
+echo -e "Link GRPC       : "
+echo -e "${trojanlink_grpc}"
+echo -e "---------------------------------------------------"
+echo -e "Format OpenClash: "
+echo -e "http://${domain}:89/trojan-$user.txt"
+echo -e "---------------------------------------------------"
+echo -e "Aktif Selama    : ${masaaktif_jam} jam"
+echo -e "Berakhir Pada   : ${exp_at}"
+echo "==================================="
+echo -e " Gunakan Dengan Bijak - Tidak Untuk dishare ke publik"

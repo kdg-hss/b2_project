@@ -1,0 +1,24 @@
+#!/bin/bash
+
+# Skrip untuk membersihkan RAM Cache (PageCache, dentries, dan inodes)
+
+echo "Membersihkan Cache RAM..."
+echo ""
+
+echo "--- Memori Sebelum Dibersihkan ---"
+free -h
+echo ""
+
+# Menyinkronkan data di buffer ke disk sebelum membersihkan cache
+sync
+
+# Perintah untuk membersihkan cache
+# 'echo 1' membersihkan pagecache
+# 'echo 2' membersihkan dentries dan inodes
+# 'echo 3' membersihkan semuanya
+echo 3 > /proc/sys/vm/drop_caches
+
+echo "--- Memori Sesudah Dibersihkan ---"
+free -h
+echo ""
+echo "✅ Cache RAM berhasil dibersihkan."

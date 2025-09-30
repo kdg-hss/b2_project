@@ -1,0 +1,234 @@
+#!/bin/bash
+# Project Bot : B2
+# Skrip ini membuat akun VMESS secara non-interaktif.
+# Dibuat Dan disempurnakan oleh Julak Bantur
+# Sebagian Catatan Kaki Telah dibersihkan
+
+# --- Ambil domain server
+domain=$(cat /etc/xray/domain)
+
+# --- Ambil Argumen ---
+user="$1"
+masaaktif="$2"
+Quota="1000"
+iplimit="2"
+
+# --- Proses Pembuatan akun
+uuid=$(cat /proc/sys/kernel/random/uuid)
+tgl=$(date -d "$masaaktif days" +"%d")
+bln=$(date -d "$masaaktif days" +"%b")
+thn=$(date -d "$masaaktif days" +"%Y")
+expe="$tgl $bln, $thn"
+tgl2=$(date +"%d")
+bln2=$(date +"%b")
+thn2=$(date +"%Y")
+tnggl="$tgl2 $bln2, $thn2"
+exp=`date -d "$masaaktif days" +"%Y-%m-%d"`
+
+# --- Tambahkan konfigurasi ke config json
+sed -i '/#vmess$/a\#vm '"$user $exp"'\
+},{"id": "'""$uuid""'","alterId": '"0"',"email": "'""$user""'"' /etc/xray/config.json
+sed -i '/#vmessgrpc$/a\#vmg '"$user $exp"'\
+},{"id": "'""$uuid""'","alterId": '"0"',"email": "'""$user""'"' /etc/xray/config.json
+
+# Bangun konfigurasi JSON untuk Vmess Link
+asu=`cat<<EOF
+      {
+      "v": "2",
+      "ps": "${user}",
+      "add": "${domain}",
+      "port": "443",
+      "id": "${uuid}",
+      "aid": "0",
+      "net": "ws",
+      "path": "/vmess",
+      "type": "none",
+      "host": "${domain}",
+      "tls": "tls",
+      "sni": "${domain}"
+}
+EOF`
+ask=`cat<<EOF
+      {
+      "v": "2",
+      "ps": "${user}",
+      "add": "${domain}",
+      "port": "80",
+      "id": "${uuid}",
+      "aid": "0",
+      "net": "ws",
+      "path": "/vmess",
+      "type": "none",
+      "host": "${domain}",
+      "tls": "none"
+}
+EOF`
+grpc=`cat<<EOF
+      {
+      "v": "2",
+      "ps": "${user}",
+      "add": "${domain}",
+      "port": "443",
+      "id": "${uuid}",
+      "aid": "0",
+      "net": "grpc",
+      "path": "vmess-grpc",
+      "type": "none",
+      "host": "${domain}",
+      "tls": "tls",
+      "sni": "${domain}"
+}
+EOF`
+
+# Encode Vmess Link ke Base64
+vmesslink1="vmess://$(echo "$asu" | base64 -w 0)"
+vmesslink2="vmess://$(echo "$ask" | base64 -w 0)"
+vmesslink3="vmess://$(echo "$grpc" | base64 -w 0)"
+
+# Restart service Xray dan Cron
+systemctl restart xray > /dev/null 2>&1
+service cron restart > /dev/null 2>&1
+
+# Buat file detail akun di public_html
+mkdir -p /home/vps/public_html/ # Pastikan direktori ini ada dan dapat ditulis
+cat >/home/vps/public_html/vmess-$user.txt <<-END
+---------------------------------------------------
+Julak Bantur Tunneling 
+---------------------------------------------------
+# Format Vmess WS TLS
+
+- name: Vmess-$user-WS TLS
+  type: vmess
+  server: ${domain}
+  port: 443
+  uuid: ${uuid}
+  alterId: 0
+  cipher: auto
+  udp: true
+  tls: true
+  skip-cert-verify: true
+  servername: ${domain}
+  network: ws
+  ws-opts:
+    path: /vmess
+    headers:
+      Host: ${domain}
+
+# Format Vmess WS Non TLS
+
+- name: Vmess-$user-WS Non TLS
+  type: vmess
+  server: ${domain}
+  port: 80
+  uuid: ${uuid}
+  alterId: 0
+  cipher: auto
+  udp: true
+  tls: false
+  skip-cert-verify: false
+  servername: ${domain}
+  network: ws
+  ws-opts:
+    path: /vmess
+    headers:
+      Host: ${domain}
+
+# Format Vmess gRPC
+
+- name: Vmess-$user-gRPC (SNI)
+  server: ${domain}
+  port: 443
+  type: vmess
+  uuid: ${uuid}
+  alterId: 0
+  cipher: auto
+  network: grpc
+  tls: true
+  servername: ${domain}
+  skip-cert-verify: true
+  grpc-opts:
+    grpc-service-name: vmess-grpc
+
+---------------------------------------------------
+ Link Akun Vmess                   
+---------------------------------------------------
+Link TLS         : 
+${vmesslink1}
+---------------------------------------------------
+Link none TLS    : 
+${vmesslink2}
+---------------------------------------------------
+Link GRPC        : 
+${vmesslink3}
+---------------------------------------------------
+
+END
+
+# Buat direktori /etc/vmess jika belum ada
+if [ ! -e /etc/vmess ]; then
+  mkdir -p /etc/vmess
+fi
+
+# Handle IP Limit
+if [[ $iplimit -gt 0 ]]; then
+    mkdir -p /etc/julak/limit/vmess/ip # Pastikan direktori ini ada
+    echo -e "$iplimit" > /etc/julak/limit/vmess/ip/$user
+fi
+
+# Handle Kuota
+c=$(echo "${Quota}" | sed 's/[^0-9]*//g')
+d=$((${c} * 1024 * 1024 * 1024))
+
+if [[ ${c} != "0" ]]; then
+  echo "${d}" >/etc/vmess/${user}
+fi
+
+# Update database vmess
+DATADB=$(cat /etc/vmess/.vmess.db 2>/dev/null | grep "^###" | grep -w "${user}" | awk '{print $2}')
+if [[ "${DATADB}" != '' ]]; then
+  sed -i "/\b${user}\b/d" /etc/vmess/.vmess.db
+fi
+echo "### ${user} ${exp} ${uuid} ${iplimit}" >>/etc/vmess/.vmess.db
+
+# --- Output for the bot
+echo "✅ Akun Vmess Berhasil Dibuat"
+echo "==================================="
+echo " Informasi Akun"
+echo -e "---------------------------------------------------"
+echo -e "Remarks         : ${user}"
+echo -e "Domain          : ${domain}"
+echo -e "User Quota      : ${Quota} GB"
+echo -e "User Ip         : ${iplimit} IP"
+echo -e "port TLS        : 443"
+echo -e "port GRPC       : 443"
+echo -e "port None TLS   : 80,8880"
+echo -e "User ID         : ${uuid}"
+echo -e "Alterid         : 0"
+echo -e "Security        : auto"
+echo -e "Path            : /vmess"
+echo -e "ServiceName     : vmess-grpc"
+echo -e "---------------------------------------------------"
+echo -e "Link TLS        : "
+echo -e "${vmesslink1}"
+echo -e "---------------------------------------------------"
+echo -e "Link NTLS       : "
+echo -e "${vmesslink2}"
+echo -e "---------------------------------------------------"
+echo -e "Link GRPC       : "
+echo -e "${vmesslink3}"
+echo -e "---------------------------------------------------"
+echo -e "Format OpenClash: "
+echo -e "http://${domain}:89/vmess-$user.txt"
+echo -e "---------------------------------------------------"
+echo -e "Aktif Selama    : $masaaktif Hari"
+echo -e "Dibuat Pada     : $tnggl"
+echo -e "Berakhir Pada   : $expe"
+echo "==================================="
+echo -e " Terimakasih Sudah Membeli Akun di Panel JulakVPN"
+
+# Restart services at the end
+systemctl restart xray
+systemctl restart nginx
+
+exit 0
+

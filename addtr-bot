@@ -1,0 +1,152 @@
+#!/bin/bash
+# Project Bot : B2
+# Script Bot Fungsi add trojan akun
+# Dibuat oleh Julak Bantur
+# Script Ini dibuat khusus untuk dikombinasikan dengan script local lts2 by julakVPN
+
+# ---- Ambil data domain
+source /var/lib/julak/ipvps.conf
+if [[ "$IP" = "" ]]; then
+domain=$(cat /etc/xray/domain)
+else
+domain=$IP
+fi
+
+# ---- Fungsi ini boleh dihapus karna tidak ada gunanya
+if [ ! -e /etc/trojan/akun ]; then
+mkdir -p /etc/trojan/akun
+fi
+
+# Command-line arguments
+user=$1
+masaaktif=$2
+Quota=1000
+iplimit=2
+
+# --- Proses Pembuatan akun
+uuid=$(cat /proc/sys/kernel/random/uuid)
+tgl=$(date -d "$masaaktif days" +"%d")
+bln=$(date -d "$masaaktif days" +"%b")
+thn=$(date -d "$masaaktif days" +"%Y")
+expe="$tgl $bln, $thn"
+tgl2=$(date +"%d")
+bln2=$(date +"%b")
+thn2=$(date +"%Y")
+tnggl="$tgl2 $bln2, $thn2"
+exp=`date -d "$masaaktif days" +"%Y-%m-%d"`
+sed -i '/#trojanws$/a\#tr '"$user $exp $uuid"'\
+},{"password": "'""$uuid""'","email": "'""$user""'"' /etc/xray/config.json
+sed -i '/#trojangrpc$/a\#trg '"$user $exp $uuid"'\
+},{"password": "'""$uuid""'","email": "'""$user""'"' /etc/xray/config.json
+
+# Link Trojan Akun
+systemctl restart xray
+######## Julak Bantur Autoscript##############
+trojanlink3="trojan://${uuid}@${domain}:443?mode=gun&security=tls&type=grpc&serviceName=trojan-grpc&sni=${domain}#${user}"
+trojanlink1="trojan://${uuid}@${domain}:443?path=%2Ftrojan-ws&security=tls&host=${domain}&type=ws&sni=${domain}#${user}"
+trojanlink2="trojan://${uuid}@${domain}:80?path=%2Ftrojan-ws&security=auto&host=${domain}&type=ws#${user}"
+########Julak Bantur Autoscript##############
+
+# --- Simpan Detail Akun ke Webserver 
+cat >/home/vps/public_html/trojan-$user.txt <<-END
+---------------------
+Format Trojan WS
+---------------------
+- name: Trojan-$user-GO/WS
+  server: ${domain}
+  port: 443
+  type: trojan
+  password: ${uuid}
+  network: ws
+  sni: ${domain}
+  skip-cert-verify: true
+  udp: true
+  ws-opts:
+    path: /trojan-ws
+    headers:
+        Host: ${domain}
+
+---------------------
+Format Trojan gRPC
+---------------------
+- name: Trojan-$user-gRPC
+  type: trojan
+  server: ${domain}
+  port: 443
+  password: ${uuid}
+  udp: true
+  sni: ${domain}
+  skip-cert-verify: true
+  network: grpc
+  grpc-opts:
+    grpc-service-name: trojan-grpc
+END
+
+# --- Buat directory Limit IP dan Quota
+if [ ! -e /etc/trojan ]; then
+  mkdir -p /etc/trojan
+fi
+
+if [[ $iplimit -gt 0 ]]; then
+mkdir -p /etc/julak/limit/trojan/ip
+echo -e "$iplimit" > /etc/julak/limit/trojan/ip/$user
+else
+echo > /dev/null
+fi
+
+if [ -z ${Quota} ]; then
+  Quota="0"
+fi
+
+c=$(echo "${Quota}" | sed 's/[^0-9]*//g')
+d=$((${c} * 1024 * 1024 * 1024))
+
+if [[ ${c} != "0" ]]; then
+  echo "${d}" >/etc/trojan/${user}
+fi
+DATADB=$(cat /etc/trojan/.trojan.db | grep "^###" | grep -w "${user}" | awk '{print $2}')
+if [[ "${DATADB}" != '' ]]; then
+  sed -i "/\b${user}\b/d" /etc/trojan/.trojan.db
+fi
+echo "### ${user} ${exp} ${uuid} ${iplimit}" >>/etc/trojan/.trojan.db
+
+# --- Output for the bot
+echo "✅ Akun Trojan Berhasil Dibuat"
+echo "==================================="
+echo " Informasi Akun"
+echo -e "---------------------------------------------------"
+echo -e "Remarks         : ${user}"
+echo -e "Domain          : ${domain}"
+echo -e "User Quota      : ${Quota} GB"
+echo -e "User Ip         : ${iplimit} IP"
+echo -e "port TLS        : 443"
+echo -e "port GRPC       : 443"
+echo -e "port None TLS  : 80,8880"
+echo -e "User ID         : ${uuid}"
+echo -e "Path TLS        : /trojan-ws"
+echo -e "ServiceName     : trojan-grpc"
+echo -e "---------------------------------------------------"
+echo -e "Link TLS        : "
+echo -e "${trojanlink1} "
+echo -e "---------------------------------------------------"
+echo -e "Link NTLS       : "
+echo -e "${trojanlink2}"
+echo -e "---------------------------------------------------"
+echo -e "Link GRPC       : "
+echo -e "${trojanlink3}"
+echo -e "---------------------------------------------------"
+echo -e "Format OpenClash: "
+echo -e "http://${domain}:89/trojan-$user.txt"
+echo -e "---------------------------------------------------"
+echo -e "Aktif Selama    : $masaaktif Hari"
+echo -e "Dibuat Pada     : $tnggl"
+echo -e "Berakhir Pada   : $expe"
+echo -e "---------------------------------------------------"
+echo -e " Terimakasih Sudah Membeli Akun di Panel JulakVPN"
+
+# Restart services at the end
+systemctl restart xray
+systemctl restart nginx
+
+exit 0
+
