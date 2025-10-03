@@ -366,7 +366,17 @@ async def process_account_creation(u, c, srv, scr, params, kbd):
 
 # ============================ 
 # Proses Renew 
-# ============================ 
+# ===========================
+def script_failed(output: str) -> bool:
+    """
+    Deteksi kalau script gagal jalan atau user tidak ditemukan.
+    """
+    if not output or len(output.strip()) == 0:
+        return True
+    keywords = ["❌", "error", "not found", "tidak ditemukan", "gagal"]
+    return any(kw.lower() in output.lower() for kw in keywords)
+
+
 async def process_extend_account(u, c, srv, scr, params, kbd):
     uid = u.effective_user.id
     is_adm = is_admin(uid)
@@ -374,40 +384,65 @@ async def process_extend_account(u, c, srv, scr, params, kbd):
     days = c.user_data.get("days", 1)
     cost = c.user_data.get("cost", ACCOUNT_COST_IDR * days)
 
+    # --- Info sementara
     if not is_adm:
-        if get_user_balance(uid) < cost:
+        balance = get_user_balance(uid)
+        if balance < cost:
             await u.message.reply_text("🚫 Saldo tidak cukup.", reply_markup=kbd)
             return ConversationHandler.END
-
-        update_user_balance(uid, cost, 'extend', f"Perpanjang {srv}: {params[0]} (+{days} hari)", True)
         await u.message.reply_text(
-            f"💸 Saldo dipotong Rp {cost:,.0f}. "
-            f"Sisa: Rp {get_user_balance(uid):,.0f}\n"
-            f"⏳ Memperpanjang akun {params[0]} {days} hari...",
+            f"✅ Saldo cukup (Rp {balance:,.0f}).\n⏳ Mencoba memperpanjang akun {params[0]} {days} hari...",
             parse_mode='HTML'
         )
     else:
         await u.message.reply_text(
-            f"👑 Admin memperpanjang akun {srv} {params[0]} {days} hari...",
-            parse_mode='HTML'
+            f"👑 Admin memperpanjang akun {srv} {params[0]} {days} hari..."
         )
 
+    # --- Jalankan script extend
     res = await run_ssh_command(f"bash {scr} {' '.join(map(str, params))}")
 
-    if "Error:" in res or "Terjadi Kesalahan" in res:
+    # --- Cek gagal / user tidak ditemukan
+    if script_failed(res):
         if not is_adm:
-            update_user_balance(uid, cost, 'refund', f"Gagal extend {srv}: {params[0]}")
             await u.message.reply_text(
-                f"❌ Gagal memperpanjang!\n{res}\n✅ Saldo Rp {cost:,.0f} dikembalikan.",
+                f"❌ Gagal memperpanjang akun!\n<pre>{res.strip()}</pre>\n💰 Saldo Anda TIDAK dikurangi.",
                 reply_markup=kbd, parse_mode='HTML'
             )
         else:
-            await u.message.reply_text(f"❌ Gagal (Admin)!\n{res}", reply_markup=kbd, parse_mode='HTML')
-    else:
-        await u.message.reply_text(
-            f"🎉 Akun {srv} {params[0]} berhasil diperpanjang {days} hari!\n<pre>{res}</pre>",
-            reply_markup=kbd, parse_mode='HTML'
+            await u.message.reply_text(
+                f"❌ Gagal (Admin):\n<pre>{res.strip()}</pre>",
+                reply_markup=kbd, parse_mode='HTML'
+            )
+        c.user_data.clear()
+        return ConversationHandler.END
+
+    # --- Sukses: potong saldo (non-admin)
+    if not is_adm:
+        # cek saldo ulang
+        if get_user_balance(uid) < cost:
+            await u.message.reply_text(
+                "🚫 Saldo tidak cukup (setelah cek ulang). Proses dibatalkan.",
+                reply_markup=kbd
+            )
+            c.user_data.clear()
+            return ConversationHandler.END
+
+        update_user_balance(
+            uid, cost, 'extend',
+            f"Perpanjang {srv}: {params[0]} (+{days} hari)",
+            True
         )
+        await u.message.reply_text(
+            f"💸 Saldo dipotong Rp {cost:,.0f}. Sisa: Rp {get_user_balance(uid):,.0f}",
+            parse_mode='HTML'
+        )
+
+    # --- Hasil akhir sukses
+    await u.message.reply_text(
+        f"🎉 Akun {srv} {params[0]} berhasil diperpanjang {days} hari!\n<pre>{res.strip()}</pre>",
+        reply_markup=kbd, parse_mode='HTML'
+    )
 
     c.user_data.clear()
     return ConversationHandler.END
