@@ -74,7 +74,7 @@ if [ -f "$DB" ]; then
   if ! cmp -s "$DB" "$TMPDB"; then
     mv "$TMPDB" "$DB"
     chmod 600 "$DB"
-    echo "✅ File $DB diperbarui untuk user $USER"
+    echo "✅ File Database diperbarui untuk user $USER"
   else
     rm -f "$TMPDB"
     echo "ℹ️ $DB sudah up-to-date."
